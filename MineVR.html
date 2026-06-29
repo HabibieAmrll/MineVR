@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Voxel Builder — Hand Gesture</title>
+<style>
+  :root{
+    --bg: #0b0e14;
+    --panel: #11151f;
+    --line: #1f2733;
+    --accent: #7dffb3;
+    --accent2: #ff8a5c;
+    --text: #e8edf4;
+    --muted: #7c8aa0;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--bg); color:var(--text);
+    font-family: 'Courier New', ui-monospace, monospace;
+    overflow:hidden;
+  }
+  #app{ position:relative; width:100vw; height:100vh; }
+
+  canvas#three-canvas{ position:absolute; inset:0; display:block; }
+
+  #video{
+    position:absolute;
+    bottom:16px; right:16px;
+    width:220px; height:165px;
+    border-radius:8px;
+    border:1px solid var(--line);
+    object-fit:cover;
+    transform:scaleX(-1);
+    z-index:5;
+    background:#000;
+    opacity:0.95;
+  }
+  #overlay-canvas{
+    position:absolute;
+    bottom:16px; right:16px;
+    width:220px; height:165px;
+    border-radius:8px;
+    transform:scaleX(-1);
+    z-index:6;
+    pointer-events:none;
+  }
+
+  #hud{
+    position:absolute; top:16px; left:16px;
+    z-index:10;
+    max-width:280px;
+  }
+  .brand{
+    font-size:11px; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--muted); margin-bottom:6px;
+  }
+  .brand b{ color:var(--accent); }
+  .panel{
+    background: rgba(17,21,31,0.85);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:14px 16px;
+    backdrop-filter: blur(6px);
+    margin-bottom:10px;
+  }
+  .panel h3{
+    margin:0 0 8px 0; font-size:12px; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--muted);
+  }
+  .row{ display:flex; align-items:center; gap:8px; font-size:13px; margin:5px 0; color:var(--text); }
+  .dot{ width:8px; height:8px; border-radius:50%; background:var(--muted); flex-shrink:0; transition:.15s; }
+  .dot.on{ background:var(--accent); box-shadow:0 0 8px var(--accent); }
+  .dot.erase{ background:var(--accent2); box-shadow:0 0 8px var(--accent2); }
+
+  #status{
+    position:absolute; top:16px; right:16px; z-index:10;
+    font-size:11px; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--muted); text-align:right;
+  }
+  #status .big{ font-size:20px; color:var(--text); letter-spacing:0; text-transform:none; margin-top:4px;}
+
+  #colors{
+    position:absolute; bottom:16px; left:16px; z-index:10;
+    display:flex; gap:8px;
+  }
+  .swatch{
+    width:30px; height:30px; border-radius:6px;
+    border:2px solid transparent;
+    cursor:pointer;
+    transition:.12s transform;
+  }
+  .swatch:hover{ transform: translateY(-3px); }
+  .swatch.active{ border-color:var(--text); }
+
+  #bottom-actions{
+    position:absolute; bottom:16px; left:50%; transform:translateX(-50%);
+    z-index:10; display:flex; gap:10px;
+  }
+  button{
+    background:var(--panel); border:1px solid var(--line); color:var(--text);
+    font-family:inherit; font-size:12px; letter-spacing:.05em; text-transform:uppercase;
+    padding:9px 16px; border-radius:8px; cursor:pointer;
+  }
+  button:hover{ border-color:var(--accent); color:var(--accent); }
+
+  #loading{
+    position:absolute; inset:0; z-index:50;
+    background:var(--bg);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:14px;
+  }
+  #loading .spin{
+    width:34px; height:34px; border-radius:50%;
+    border:3px solid var(--line); border-top-color:var(--accent);
+    animation:spin 0.9s linear infinite;
+  }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  #loading .msg{ color:var(--muted); font-size:13px; letter-spacing:.05em; }
+  #loading .err{ color:var(--accent2); font-size:12px; max-width:320px; text-align:center; }
+
+  kbd{
+    background:#0008; border:1px solid var(--line); border-radius:4px;
+    padding:1px 6px; font-size:11px; color:var(--accent);
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="three-canvas"></canvas>
+
+  <div id="hud">
+    <div class="brand"><b>VOXEL//</b> hand gesture builder</div>
+    <div class="panel">
+      <h3>Gesture</h3>
+      <div class="row"><span class="dot" id="dot-track"></span> Tangan terdeteksi</div>
+      <div class="row"><span class="dot" id="dot-pinch"></span> Pinch → tempatkan blok</div>
+      <div class="row"><span class="dot erase" id="dot-fist"></span> Kepalan → hapus blok</div>
+    </div>
+    <div class="panel">
+      <h3>Cara pakai</h3>
+      <div class="row" style="color:var(--muted); font-size:12px; line-height:1.5;">
+        Gerakkan telunjuk untuk memindahkan kursor. <b>Pinch</b> (jempol+telunjuk nempel) untuk meletakkan voxel. <b>Kepalkan tangan</b> untuk menghapus voxel di kursor.
+      </div>
+    </div>
+  </div>
+
+  <div id="status">
+    <div>Voxel</div>
+    <div class="big" id="voxel-count">0</div>
+  </div>
+
+  <div id="colors">
+    <div class="swatch active" style="background:#7dffb3" data-color="#7dffb3"></div>
+    <div class="swatch" style="background:#5ca9ff" data-color="#5ca9ff"></div>
+    <div class="swatch" style="background:#ff8a5c" data-color="#ff8a5c"></div>
+    <div class="swatch" style="background:#ffe35c" data-color="#ffe35c"></div>
+    <div class="swatch" style="background:#ff5c8a" data-color="#ff5c8a"></div>
+    <div class="swatch" style="background:#c45cff" data-color="#c45cff"></div>
+  </div>
+
+  <div id="bottom-actions">
+    <button id="btn-clear">Bersihkan semua</button>
+    <button id="btn-mouse">Mode mouse: <span id="mouse-state">OFF</span></button>
+  </div>
+
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="overlay-canvas"></canvas>
+
+  <div id="loading">
+    <div class="spin"></div>
+    <div class="msg" id="loading-msg">Meminta akses webcam…</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js" onerror="window.__loadError('Three.js')"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" onerror="window.__loadError('MediaPipe Hands')"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" onerror="window.__loadError('MediaPipe Camera Utils')"></script>
+
+<script>
+window.__loadError = function(libName){
+  var loading = document.getElementById('loading');
+  var msg = document.getElementById('loading-msg');
+  if (loading && msg){
+    loading.querySelector('.spin').style.display = 'none';
+    msg.innerHTML = 'Gagal memuat library <b>' + libName + '</b> dari CDN.<br><br>' +
+      '<span style="color:var(--accent2); font-size:12px;">' +
+      'Kemungkinan penyebab:<br>' +
+      '1. Tidak ada koneksi internet saat halaman dimuat<br>' +
+      '2. Firewall/jaringan kantor/kampus blokir CDN<br>' +
+      '3. Ad-blocker/extension memblokir script eksternal<br><br>' +
+      'Coba: refresh halaman, matikan ad-blocker, atau coba jaringan lain (hotspot HP).' +
+      '</span>';
+  }
+};
+
+(function(){
+  // Guard: pastikan library inti sudah ter-load sebelum lanjut
+  if (typeof THREE === 'undefined'){
+    window.__loadError('Three.js');
+    return;
+  }
+  if (typeof Hands === 'undefined' || typeof Camera === 'undefined'){
+    window.__loadError('MediaPipe');
+    return;
+  }
+  // ---------- Three.js setup ----------
+  const canvas = document.getElementById('three-canvas');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor(0x0b0e14, 1);
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x0b0e14, 18, 38);
+
+  const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 100);
+  camera.position.set(9, 9, 12);
+  camera.lookAt(0,0,0);
+
+  // Orbit-ish manual camera control (mouse drag) so the demo still works nicely
+  let camAngle = Math.atan2(camera.position.x, camera.position.z);
+  let camHeight = camera.position.y;
+  let camDist = Math.sqrt(camera.position.x**2 + camera.position.z**2);
+  function updateCamera(){
+    camera.position.x = Math.sin(camAngle) * camDist;
+    camera.position.z = Math.cos(camAngle) * camDist;
+    camera.position.y = camHeight;
+    camera.lookAt(0, 1, 0);
+  }
+  updateCamera();
+
+  let dragging = false, lastX=0, lastY=0;
+  canvas.addEventListener('pointerdown', e=>{ dragging=true; lastX=e.clientX; lastY=e.clientY; });
+  window.addEventListener('pointerup', ()=> dragging=false);
+  window.addEventListener('pointermove', e=>{
+    if(!dragging) return;
+    const dx = e.clientX-lastX, dy = e.clientY-lastY;
+    camAngle -= dx * 0.005;
+    camHeight = Math.max(2, Math.min(18, camHeight - dy*0.03));
+    lastX=e.clientX; lastY=e.clientY;
+    updateCamera();
+  });
+  canvas.addEventListener('wheel', e=>{
+    camDist = Math.max(5, Math.min(28, camDist + e.deltaY*0.01));
+    updateCamera();
+  }, { passive:true });
+
+  // Lighting
+  scene.add(new THREE.AmbientLight(0x9fb4d8, 0.55));
+  const dl = new THREE.DirectionalLight(0xffffff, 0.9);
+  dl.position.set(8, 14, 6);
+  scene.add(dl);
+  const dl2 = new THREE.DirectionalLight(0x5c9aff, 0.25);
+  dl2.position.set(-8, 6, -6);
+  scene.add(dl2);
+
+  // Grid
+  const GRID = 12;        // half-extent in cells
+  const CELL = 1;
+  const gridHelper = new THREE.GridHelper(GRID*2*CELL, GRID*2, 0x2a3344, 0x1a212c);
+  scene.add(gridHelper);
+
+  // Ground plane (invisible, for raycasting)
+  const groundGeo = new THREE.PlaneGeometry(GRID*2*CELL, GRID*2*CELL);
+  const groundMat = new THREE.MeshBasicMaterial({ visible:false });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI/2;
+  scene.add(ground);
+
+  // Voxel storage: key "x,y,z" -> mesh
+  const voxels = new Map();
+  const voxelGeo = new THREE.BoxGeometry(0.96, 0.96, 0.96);
+  const edgesGeo = new THREE.EdgesGeometry(voxelGeo);
+
+  function snap(v){ return Math.round(v); }
+  function keyOf(x,y,z){ return x+','+y+','+z; }
+
+  let currentColor = 0x7dffb3;
+
+  function addVoxel(x,y,z){
+    x=snap(x); y=snap(y); z=snap(z);
+    if (y<0) y=0;
+    if (Math.abs(x)>GRID || Math.abs(z)>GRID || y>GRID) return;
+    const k = keyOf(x,y,z);
+    if (voxels.has(k)) return;
+    const mat = new THREE.MeshStandardMaterial({ color: currentColor, roughness:0.5, metalness:0.05 });
+    const mesh = new THREE.Mesh(voxelGeo, mat);
+    mesh.position.set(x*CELL, y*CELL+0.5, z*CELL);
+    const edges = new THREE.LineSegments(edgesGeo, new THREE.LineBasicMaterial({ color:0x0b0e14, transparent:true, opacity:0.35 }));
+    mesh.add(edges);
+    scene.add(mesh);
+    voxels.set(k, mesh);
+    updateCount();
+  }
+
+  function removeVoxel(x,y,z){
+    x=snap(x); y=snap(y); z=snap(z);
+    const k = keyOf(x,y,z);
+    const mesh = voxels.get(k);
+    if (mesh){
+      scene.remove(mesh);
+      voxels.delete(k);
+      updateCount();
+    }
+  }
+
+  function clearAll(){
+    for (const mesh of voxels.values()) scene.remove(mesh);
+    voxels.clear();
+    updateCount();
+  }
+
+  function updateCount(){
+    document.getElementById('voxel-count').textContent = voxels.size;
+  }
+
+  // Cursor (ghost) indicator
+  const cursorGeo = new THREE.BoxGeometry(1, 1, 1);
+  const cursorMat = new THREE.MeshBasicMaterial({ color:0x7dffb3, transparent:true, opacity:0.35, wireframe:false });
+  const cursor = new THREE.Mesh(cursorGeo, cursorMat);
+  const cursorEdges = new THREE.LineSegments(new THREE.EdgesGeometry(cursorGeo), new THREE.LineBasicMaterial({ color:0xffffff }));
+  cursor.add(cursorEdges);
+  cursor.visible = false;
+  scene.add(cursor);
+
+  // Raycaster driven by a normalized 2D point (from hand or mouse)
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+
+  // Build a list of top faces of existing voxels + ground, so cursor can "stack"
+  function getTargetCell(){
+    raycaster.setFromCamera(ndc, camera);
+    const targets = [...voxels.values(), ground];
+    const hits = raycaster.intersectObjects(targets, false);
+    if (hits.length === 0) return null;
+    const hit = hits[0];
+    let base;
+    if (hit.object === ground){
+      base = hit.point.clone();
+      base.y = 0;
+    } else {
+      base = hit.object.position.clone();
+      base.y -= 0.5; // base of that voxel
+      // offset by face normal to know which side we're adding on
+      const n = hit.face.normal.clone();
+      n.transformDirection(hit.object.matrixWorld);
+      base.add(n.multiplyScalar(1));
+      base.y += 0.5;
+    }
+    return { x: snap(base.x), y: Math.max(0,snap(base.y - 0.5)), z: snap(base.z), hitObject: hit.object };
+  }
+
+  function getEraseCell(){
+    raycaster.setFromCamera(ndc, camera);
+    const targets = [...voxels.values()];
+    const hits = raycaster.intersectObjects(targets, false);
+    if (hits.length === 0) return null;
+    const p = hits[0].object.position;
+    return { x: snap(p.x), y: snap(p.y-0.5), z: snap(p.z) };
+  }
+
+  function updateCursorVisual(){
+    const cell = getTargetCell();
+    if (!cell){ cursor.visible = false; return; }
+    cursor.visible = true;
+    cursor.position.set(cell.x*CELL, cell.y*CELL+0.5, cell.z*CELL);
+  }
+
+  // ---------- Color swatches ----------
+  document.querySelectorAll('.swatch').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      document.querySelectorAll('.swatch').forEach(s=>s.classList.remove('active'));
+      el.classList.add('active');
+      currentColor = parseInt(el.dataset.color.replace('#','0x'));
+      cursorMat.color.setHex(currentColor);
+    });
+  });
+
+  document.getElementById('btn-clear').addEventListener('click', clearAll);
+
+  // ---------- Mouse fallback mode ----------
+  let mouseMode = false;
+  document.getElementById('btn-mouse').addEventListener('click', ()=>{
+    mouseMode = !mouseMode;
+    document.getElementById('mouse-state').textContent = mouseMode ? 'ON' : 'OFF';
+  });
+
+  window.addEventListener('pointermove', e=>{
+    if (!mouseMode) return;
+    ndc.x = (e.clientX/window.innerWidth)*2 - 1;
+    ndc.y = -(e.clientY/window.innerHeight)*2 + 1;
+    updateCursorVisual();
+  });
+  window.addEventListener('click', e=>{
+    if (!mouseMode) return;
+    if (e.target.closest('#hud, #colors, #bottom-actions, #status')) return;
+    const cell = getTargetCell();
+    if (cell) addVoxel(cell.x, cell.y, cell.z);
+  });
+  window.addEventListener('contextmenu', e=>{
+    if (!mouseMode) return;
+    e.preventDefault();
+    const cell = getEraseCell();
+    if (cell) removeVoxel(cell.x, cell.y, cell.z);
+  });
+
+  // ---------- Resize ----------
+  window.addEventListener('resize', ()=>{
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ---------- Render loop ----------
+  function animate(){
+    requestAnimationFrame(animate);
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // ================= MediaPipe Hands =================
+  const videoEl = document.getElementById('video');
+  const overlayEl = document.getElementById('overlay-canvas');
+  const octx = overlayEl.getContext('2d');
+
+  const dotTrack = document.getElementById('dot-track');
+  const dotPinch = document.getElementById('dot-pinch');
+  const dotFist  = document.getElementById('dot-fist');
+
+  const loading = document.getElementById('loading');
+  const loadingMsg = document.getElementById('loading-msg');
+
+  // Gesture state machine: debounce so a single pinch = one placement, etc.
+  let wasPinching = false;
+  let wasFist = false;
+  let pinchCooldown = 0;
+  let fistCooldown = 0;
+
+  function dist(a, b){
+    return Math.hypot(a.x-b.x, a.y-b.y, (a.z||0)-(b.z||0));
+  }
+
+  function isFist(landmarks){
+    // Compare fingertip-to-wrist distance vs a knuckle reference to detect curl
+    const wrist = landmarks[0];
+    const tips = [8, 12, 16, 20]; // index, middle, ring, pinky tips
+    const mcps = [5, 9, 13, 17];  // their base knuckles
+    let curled = 0;
+    for (let i=0;i<tips.length;i++){
+      const tipDist = dist(landmarks[tips[i]], wrist);
+      const mcpDist = dist(landmarks[mcps[i]], wrist);
+      if (tipDist < mcpDist * 1.15) curled++;
+    }
+    return curled >= 3;
+  }
+
+  function isPinching(landmarks){
+    const thumbTip = landmarks[4];
+    const indexTip = landmarks[8];
+    const palmRef = dist(landmarks[0], landmarks[9]); // wrist to middle-mcp, scale reference
+    const d = dist(thumbTip, indexTip);
+    return d < palmRef * 0.45;
+  }
+
+  function onResults(results){
+    octx.save();
+    octx.clearRect(0,0,overlayEl.width, overlayEl.height);
+
+    if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0){
+      dotTrack.classList.remove('on');
+      dotPinch.classList.remove('on');
+      dotFist.classList.remove('on');
+      cursor.visible = mouseMode ? cursor.visible : false;
+      octx.restore();
+      return;
+    }
+
+    dotTrack.classList.add('on');
+    const landmarks = results.multiHandLandmarks[0];
+
+    // Draw landmarks on overlay (simple dots + connections)
+    octx.fillStyle = '#7dffb3';
+    octx.strokeStyle = 'rgba(125,255,179,0.5)';
+    octx.lineWidth = 2;
+    const W = overlayEl.width, H = overlayEl.height;
+    const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+    HAND_CONNECTIONS.forEach(([a,b])=>{
+      octx.beginPath();
+      octx.moveTo(landmarks[a].x*W, landmarks[a].y*H);
+      octx.lineTo(landmarks[b].x*W, landmarks[b].y*H);
+      octx.stroke();
+    });
+    landmarks.forEach(p=>{
+      octx.beginPath();
+      octx.arc(p.x*W, p.y*H, 3, 0, Math.PI*2);
+      octx.fill();
+    });
+
+    // Use index fingertip to drive the 3D cursor (mirror x because video is mirrored visually)
+    const indexTip = landmarks[8];
+    ndc.x = (1 - indexTip.x) * 2 - 1; // un-mirror for world space
+    ndc.y = -(indexTip.y * 2 - 1);
+    if (!mouseMode) updateCursorVisual();
+
+    const pinching = isPinching(landmarks);
+    const fisted = isFist(landmarks);
+
+    dotPinch.classList.toggle('on', pinching);
+    dotFist.classList.toggle('on', fisted);
+
+    if (pinchCooldown > 0) pinchCooldown--;
+    if (fistCooldown > 0) fistCooldown--;
+
+    if (!mouseMode){
+      if (pinching && !wasPinching && pinchCooldown === 0 && !fisted){
+        const cell = getTargetCell();
+        if (cell){ addVoxel(cell.x, cell.y, cell.z); }
+        pinchCooldown = 14;
+      }
+      if (fisted && !wasFist && fistCooldown === 0){
+        const cell = getEraseCell();
+        if (cell){ removeVoxel(cell.x, cell.y, cell.z); }
+        fistCooldown = 14;
+      }
+    }
+
+    wasPinching = pinching;
+    wasFist = fisted;
+    octx.restore();
+  }
+
+  const hands = new Hands({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
+  });
+  hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.6
+  });
+  hands.onResults(onResults);
+
+  function resizeOverlay(){
+    overlayEl.width = videoEl.clientWidth;
+    overlayEl.height = videoEl.clientHeight;
+  }
+
+  async function start(){
+    try{
+      loadingMsg.textContent = 'Meminta akses webcam…';
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width:640, height:480 }, audio:false });
+      videoEl.srcObject = stream;
+      await videoEl.play();
+      resizeOverlay();
+      window.addEventListener('resize', resizeOverlay);
+
+      loadingMsg.textContent = 'Memuat model MediaPipe…';
+
+      const camUtils = new Camera(videoEl, {
+        onFrame: async () => { await hands.send({ image: videoEl }); },
+        width: 640,
+        height: 480
+      });
+      camUtils.start();
+
+      loading.style.display = 'none';
+    } catch(err){
+      console.error(err);
+      loading.innerHTML = '<div class="err">Tidak bisa mengakses webcam.<br>Izinkan akses kamera di browser, lalu muat ulang halaman.<br><br>Kamu masih bisa coba <b>Mode mouse</b> di pojok kanan bawah setelah menutup pesan ini.</div><button id="dismiss-loading" style="margin-top:10px;">Tutup &amp; pakai mouse</button>';
+      document.getElementById('dismiss-loading').addEventListener('click', ()=>{
+        loading.style.display = 'none';
+        mouseMode = true;
+        document.getElementById('mouse-state').textContent = 'ON';
+      });
+    }
+  }
+
+  start();
+
+})();
+</script>
+</body>
+</html>
